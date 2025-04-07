@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>56x56x10 黑盒子 - 交互式绘图演示</title>
+    <style>
+        body { margin: 0; overflow: hidden; }
+        canvas { 
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            touch-action: none;
+        }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            background: rgba(0,0,0,0.5);
+            padding: 10px;
+            font-family: Arial, sans-serif;
+            font-size: 14px;
+            z-index: 100;
+        }
+        #buttonContainer {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 10px;
+            z-index: 100;
+            flex-wrap: wrap;
+            justify-content: center;
+            max-width: 100%;
+            padding: 0 10px;
+        }
+        #buttonContainer button {
+            padding: 12px 20px;
+            font-size: 16px;
+            border: 1px solid #666;
+            background: rgba(255,255,255,0.9);
+            cursor: pointer;
+            border-radius: 4px;
+            min-width: 60px;
+            flex-shrink: 0;
+        }
+        #modeToggle {
+            position: fixed;
+            top: 60px;
+            left: 10px;
+            padding: 10px 15px;
+            background: rgba(255,255,255,0.9);
+            border: 1px solid #666;
+            cursor: pointer;
+            z-index: 100;
+            font-size: 14px;
+        }
+        #rotateCW {
+            position: fixed;
+            top: 60px;
+            right: 10px;
+            padding: 10px 15px;
+            background: rgba(255,255,255,0.9);
+            border: 1px solid #666;
+            cursor: pointer;
+            z-index: 100;
+            display: none;
+            font-size: 14px;
+        }
+        #buttonContainer button:disabled {
+            background: rgba(200,200,200,0.5);
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">56x56x10 黑盒子 - 当前模式：预设绘图</div>
+    <button id="modeToggle">进入自由绘制模式</button>
+    <button id="rotateCW">转90度</button>
+    <div id="buttonContainer">
+        <button id="btn13">13</button>
+        <button id="btn36" disabled>36</button>
+        <button id="btn45" disabled>45</button>
+        <button id="btnRotate" disabled>旋转90度</button>
+        <button id="btn18" disabled>18</button>
+        <button id="btn28" disabled>28</button>
+        <button id="btn38" disabled>38</button>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
+    <script>
+        // 初始化核心组件
+        let isDrawingMode = false;
+        let currentLine = null;
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+        const presetLines = [];
+        const freeDrawLines = [];
+        
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 500);
+        const renderer = new THREE.WebGLRenderer({ 
+            antialias: true,
+            powerPreference: "high-performance",
+            alpha: true,
+            depth: true
+        });
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        let cuboid;
+
+        // 初始化场景
+        function initScene() {
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setClearColor(0xdddddd, 0);
+            document.body.appendChild(renderer.domElement);
+
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.08;
+            controls.screenSpacePanning = true;
+            controls.minDistance = 50;
+            controls.maxDistance = 300;
+
+            const boxGeometry = new THREE.BoxGeometry(56, 56, 10);
+            const boxMaterial = new THREE.MeshPhongMaterial({ 
+                color: 0x000000,
+                specular: 0x444444,
+                shininess: 50,
+                wireframe: false
+            });
+            
+            const edges = new THREE.EdgesGeometry(boxGeometry);
+            const edgeMaterial = new THREE.LineBasicMaterial({ 
+                color: 0xffff99,
+                linewidth: 2
+            });
+            cuboid = new THREE.Mesh(boxGeometry, boxMaterial);
+            cuboid.add(new THREE.LineSegments(edges, edgeMaterial));
+            scene.add(cuboid);
+
+            scene.add(new THREE.AmbientLight(0xffffff, 1.8));
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 2.5);
+            directionalLight.position.set(1.2, 1.5, 1.2).normalize();
+            scene.add(directionalLight);
+
+            camera.position.set(0, 0, 150);
+            camera.lookAt(cuboid.position);
+        }
+
+        // 模式切换功能
+        function setupModeToggle() {
+            const modeToggle = document.getElementById('modeToggle');
+            const rotateCWBtn = document.getElementById('rotateCW');
+
+            modeToggle.addEventListener('click', () => {
+                if(!isDrawingMode) {
+                    presetLines.forEach(line => {
+                        line.geometry.dispose();
+                        line.material.dispose();
+                        cuboid.remove(line);
+                    });
+                    presetLines.length = 0;
+                    
+                    isDrawingMode = true;
+                    modeToggle.textContent = "重新开始";
+                    rotateCWBtn.style.display = 'block';
+                    document.getElementById('info').textContent = "56x56x10 黑盒子 - 当前模式：自由绘制";
+                    controls.enabled = false;
+                } else {
+                    location.reload();
+                }
+            });
+        }
+
+        // 旋转功能
+        function rotateClockwise() {
+            animateRotation(cuboid.rotation.z, cuboid.rotation.z - Math.PI/2);
+        }
+
+        function animateRotation(start, target) {
+            const startTime = Date.now();
+            const duration = 800;
+            
+            const update = () => {
+                const elapsed = Date.now() - startTime;
+                const progress = Math.min(elapsed / duration, 1);
+                cuboid.rotation.z = start + (target - start) * progress;
+                if(progress < 1) requestAnimationFrame(update);
+            };
+            requestAnimationFrame(update);
+        }
+
+        // 事件处理系统
+        function setupEventListeners() {
+            const canvas = renderer.domElement;
+            
+            canvas.addEventListener('mousedown', (e) => {
+                if(!isDrawingMode) return;
+                e.preventDefault();
+                startDrawing(e);
+            });
+            canvas.addEventListener('mousemove', (e) => {
+                if(!isDrawingMode || !currentLine) return;
+                e.preventDefault();
+                continueDrawing(e);
+            });
+            canvas.addEventListener('mouseup', () => currentLine = null);
+
+            canvas.addEventListener('touchstart', (e) => {
+                if(!isDrawingMode) return;
+                e.preventDefault();
+                startDrawing(e.touches[0]);
+            }, { passive: false });
+            canvas.addEventListener('touchmove', (e) => {
+                if(!isDrawingMode || !currentLine) return;
+                e.preventDefault();
+                continueDrawing(e.touches[0]);
+            }, { passive: false });
+            canvas.addEventListener('touchend', () => currentLine = null);
+
+            document.getElementById('rotateCW').addEventListener('click', rotateClockwise);
+            const buttonActions = {
+                btn13: drawLine13,
+                btn36: drawLine36,
+                btn45: drawLine45,
+                btnRotate: rotateBox,
+                btn18: drawLine18,
+                btn28: drawLine28,
+                btn38: drawLine38
+            };
+            Object.entries(buttonActions).forEach(([id, fn]) => {
+                document.getElementById(id).addEventListener('click', fn);
+            });
+        }
+
+        // 坐标转换核心方法（关键修复）
+        function getIntersection(event) {
+            const rect = renderer.domElement.getBoundingClientRect();
+            const clientX = event.touches?.[0]?.clientX || event.clientX;
+            const clientY = event.touches?.[0]?.clientY || event.clientY;
+            
+            mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+            
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObject(cuboid);
+            
+            if(intersects[0]) {
+                // 关键修复：使用逆矩阵转换坐标
+                const matrix = new THREE.Matrix4().getInverse(cuboid.matrixWorld);
+                return intersects[0].point.applyMatrix4(matrix);
+            }
+            return null;
+        }
+
+        // 绘制功能
+        function startDrawing(event) {
+            const point = getIntersection(event);
+            if(point) {
+                currentLine = new THREE.Line(
+                    new THREE.BufferGeometry().setFromPoints([point, point]),
+                    new THREE.LineBasicMaterial({ 
+                        color: 0xff3300,
+                        linewidth: 3
+                    })
+                );
+                freeDrawLines.push(currentLine);
+                cuboid.add(currentLine);
+            }
+        }
+
+        function continueDrawing(event) {
+            const point = getIntersection(event);
+            if(point && currentLine) {
+                const positions = currentLine.geometry.attributes.position;
+                positions.setXYZ(1, point.x, point.y, point.z);
+                positions.needsUpdate = true;
+            }
+        }
+
+        // 预设动画绘制系统
+        function createAnimatedLine(start, end, duration=1000) {
+            return new Promise(resolve => {
+                const geometry = new THREE.BufferGeometry();
+                const material = new THREE.LineBasicMaterial({ color: 0xffffff });
+                const positions = new Float32Array(6);
+                
+                positions[0] = start.x;
+                positions[1] = start.y;
+                positions[2] = start.z;
+                geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                
+                const line = new THREE.Line(geometry, material);
+                presetLines.push(line);
+                cuboid.add(line);
+
+                const startTime = Date.now();
+                const animate = () => {
+                    const progress = Math.min((Date.now() - startTime)/duration, 1);
+                    const current = start.clone().lerp(end, progress);
+                    positions[3] = current.x;
+                    positions[4] = current.y;
+                    positions[5] = current.z;
+                    geometry.attributes.position.needsUpdate = true;
+                    progress < 1 ? requestAnimationFrame(animate) : resolve();
+                };
+                requestAnimationFrame(animate);
+            });
+        }
+
+        // 预设绘图指令
+        const drawFunctions = {
+            drawLine13: () => createAnimatedLine(
+                new THREE.Vector3(-10, -15, 5),
+                new THREE.Vector3(10, -15, 5)
+            ),
+            drawLine36: () => createAnimatedLine(
+                new THREE.Vector3(-28, 8, 5),
+                new THREE.Vector3(28, 8, 5)
+            ),
+            drawLine45: () => createAnimatedLine(
+                new THREE.Vector3(-12, 17, 5),
+                new THREE.Vector3(12, 17, 5)
+            ),
+            drawLine18: () => createAnimatedLine(
+                new THREE.Vector3(10, 5, 5),
+                new THREE.Vector3(10, 28, 5)
+            ),
+            drawLine28: async () => {
+                await createAnimatedLine(new THREE.Vector3(0, 10, 5), new THREE.Vector3(0, 24, 5));
+                await createAnimatedLine(new THREE.Vector3(0, -25, 5), new THREE.Vector3(0, -5, 5));
+            },
+            drawLine38: () => createAnimatedLine(
+                new THREE.Vector3(-10, 5, 5),
+                new THREE.Vector3(-10, 28, 5)
+            ),
+            rotateBox: () => {
+                const targetRotation = cuboid.rotation.z - Math.PI/2;
+                animateRotation(cuboid.rotation.z, targetRotation);
+            }
+        };
+
+        // 按钮状态管理
+        let currentStep = 0;
+        const buttons = [
+            document.getElementById('btn13'),
+            document.getElementById('btn36'),
+            document.getElementById('btn45'),
+            document.getElementById('btnRotate'),
+            document.getElementById('btn18'),
+            document.getElementById('btn28'),
+            document.getElementById('btn38')
+        ];
+
+        async function executeStep(fn) {
+            await fn();
+            buttons[currentStep].disabled = true;
+            if(currentStep < buttons.length-1) buttons[currentStep+1].disabled = false;
+            currentStep++;
+        }
+
+        Object.entries(drawFunctions).forEach(([name, fn]) => {
+            window[name] = () => executeStep(fn);
+        });
+
+        // 动画循环
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        // 响应式布局
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // 初始化执行
+        initScene();
+        setupModeToggle();
+        setupEventListeners();
+        animate();
+    </script>
+</body>
+</html>
